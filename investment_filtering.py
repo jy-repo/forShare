@@ -728,7 +728,9 @@ def create_dataframe():
         williamsr.append(BOOK[key]["eval"]["Williams%R"])
 
     df = pd.DataFrame(list(zip(rsi, macd, williamsr)), index=index, columns=["RSI", "MACD", "William %R"])
-    df.style.applymap(df_color_text,subset=["RSI", "MACD", "William %R"])
+    df.style.apply(df_color_text, subset=["RSI", "MACD", "Williams%R"])
+
+    print(df)
 
     st.dataframe(df, width=800, height=900)
 
@@ -736,15 +738,19 @@ def create_dataframe():
 
 def df_color_text(value):
 
-    match_red1 = re.search(r"과매수", value)
-    match_red2 = re.search(r"골든크로스", value)
-    match_blue1 = re.search(r"과매도", value)
-    match_blue2 = re.search(r"데드크로스", value)
+    match_red1 = True if "과매수" in value else False
+    match_red2 = True if "골든크로스" in value else False
+    match_blue1 = True if "과매도" in value else False
+    match_blue2 = True if "데드크로스" in value else False
 
     if match_red1 or match_red2:
-        f'color: red'
+        style = f'background-color: red'
+    elif match_blue1 or match_blue2:
+        style = f'background-color: blue'
     else:
-        f'color: blue'
+        style = ""
+
+    return style
 
 class txt_color:
 
