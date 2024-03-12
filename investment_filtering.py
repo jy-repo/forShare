@@ -19,9 +19,11 @@ def refresh_progress_bar(value, text):
 # 제목
 st.title('sasdf')
 
-# Create a sidebar
-st.sidebar.title('Sidebar Title')
-st.sidebar.write('This is a Streamlit sidebar example.')
+# # Create a sidebar
+# st.sidebar.title('Sidebar Title')
+# st.sidebar.write('This is a Streamlit sidebar example.')
+
+
 
 #######################################
 # 업데이트
@@ -113,8 +115,6 @@ def get_all_tickers_candles():
     # query 요청 수행
     temp_cnt = 0
     for i, (ticker, unit) in enumerate(targets):
-
-        time.sleep(0.01)
         
         temp_cnt += 1
         if temp_cnt > 999: break    # 디버그용
@@ -727,28 +727,25 @@ def create_dataframe():
         macd.append(BOOK[key]["eval"]["MACD"])
         williamsr.append(BOOK[key]["eval"]["Williams%R"])
 
-    df = pd.DataFrame(list(zip(rsi, macd, williamsr)), index=index, columns=["RSI", "MACD", "William %R"])
-    df.style.apply(df_color_text, subset=["RSI", "MACD", "Williams%R"])
-
-    print(df)
-
-    st.dataframe(df, width=800, height=900)
+    df = pd.DataFrame(list(zip(rsi, macd, williamsr)), index=index, columns=["RSI", "MACD", "Williams %R"])
+    st.dataframe(df.style.applymap(df_color_text, subset=["RSI", "MACD", "Williams %R"]), width=800, height=900)
 
     return
 
 def df_color_text(value):
 
-    match_red1 = True if "과매수" in value else False
+    value = str(value)
+    match_red1 = True if "과매도" in value else False
     match_red2 = True if "골든크로스" in value else False
-    match_blue1 = True if "과매도" in value else False
+    match_blue1 = True if "과매수" in value else False
     match_blue2 = True if "데드크로스" in value else False
 
     if match_red1 or match_red2:
-        style = f'background-color: red'
+        style = f'color: red'
     elif match_blue1 or match_blue2:
-        style = f'background-color: blue'
+        style = f'color: blue'
     else:
-        style = ""
+        style = f""
 
     return style
 
