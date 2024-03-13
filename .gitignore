@@ -1,0 +1,12 @@
+
+# vscode 환경
+.vscode/
+
+# python env
+.venv3.11/
+__pycache__
+
+# 코인 데이터
+book.json
+
+# 

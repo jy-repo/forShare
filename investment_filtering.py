@@ -1,182 +1,134 @@
-import streamlit as st
-from streamlit.runtime.scriptrunner import add_script_run_ctx
-import pandas as pd
-import numpy as np
-import requests
-import time
+
+
 import datetime
-import re
-import threading
-import asyncio
+import json
+import numpy as np
+import pandas as pd
+import requests
+import streamlit as st
+import time
+import websocket  # websocket-client
 
 # from upbit_logics import get_all_tickers_candles
 
 ###############################################################################
-# Page Layout
-###############################################################################
-def refresh_progress_bar(value, text):
-    st.session_state["bar_progress"].progress(value, text=text)
-# 제목
-st.title('sasdf')
-
-# # Create a sidebar
-# st.sidebar.title('Sidebar Title')
-# st.sidebar.write('This is a Streamlit sidebar example.')
-
-
-
-#######################################
-# 업데이트
-#######################################
-
-# # 업데이트 시작/중지 버튼
-# update_button_001 = "update_button_001"     # 업데이트 시작/중단 버튼
-# if update_button_001 not in st.session_state:       # 업데이트 버튼 추가
-#     st.session_state[update_button_001] = False     # 초기 세팅 버튼 값 : False - 업데이트 불가능 (초기값 또는 동작중)
-
-# if not st.session_state[update_button_001]:         # 업데이트 대기
-#     def start_logic():
-#         loop = asyncio.get_event_loop()
-#         loop.run_until_complete(get_all_tickers_candles())
-#         loop.close()
-#     st.button("업데이트 시작", on_click=start_logic)
-#     st.session_state[update_button_001] = True      # 업데이트 가능 상태로 변경
-# else:                                               # 업데이트 중
-#     st.button("업데이트 중지", on_click=None)
-#     st.session_state[update_button_001] = False
-
-# # 업데이트 상태 출력
-# update_status_001 = "update_status_001"     # 동작 상태
-# UPDATE_STATUS_001_MESSAGE_WAITING = "STATUS: 대기중"
-# UPDATE_STATUS_001_MESSAGE_WORKING = "STATUS: 업데이트중"
-# if update_status_001 not in st.session_state: st.session_state[update_status_001] = ""
-# if st.session_state[update_button_001]:             # 업데이트 대기
-#     st.session_state[update_status_001] = UPDATE_STATUS_001_MESSAGE_WAITING
-# else:                                               # 업데이트 중
-#     st.session_state[update_status_001] = UPDATE_STATUS_001_MESSAGE_WORKING
-# st.write(st.session_state[update_status_001])
-
-
-# # 업데이트 상세 출력 1
-# update_detail_001 = "update_detail_001"
-# if update_detail_001 not in st.session_state: st.session_state[update_detail_001] = "OHLCV 조회 (초당 최대 9회 제한 by 업비트) : 상세설명 1"
-# st.text(st.session_state[update_detail_001])
-
-# # 업데이트 상세 출력 2
-# update_detail_002 = "update_detail_002"
-# if update_detail_002 not in st.session_state:
-#     st.session_state[update_detail_002] = "OHLCV 조회 (초당 최대 9회 제한 by 업비트) : 상세설명 1"
-# st.write(st.session_state[update_detail_002])
-
-# # 업데이트 상세 출력 3
-# update_detail_003 = "update_detail_003"
-# if update_detail_003 not in st.session_state:
-#     st.session_state[update_detail_003] = "OHLCV 조회 (초당 최대 9회 제한 by 업비트) : 상세설명 1"
-# st.write(st.session_state[update_detail_003])
-
-
-# ==================================================================================================================================
-# ==================================================================================================================================
-# ==================================================================================================================================
-# ==================================================================================================================================
-# ==================================================================================================================================
-# ==================================================================================================================================
-# ==================================================================================================================================
-# ==================================================================================================================================
-
-import requests
-import json
-import time
-
-BOOK = {}
-BOOK_PATH = "book.json"
-
-###############################################################################
-# Upbit Query
+# 공통
 ###############################################################################
 
-def get_all_tickers_candles():
+########## 업비트 API 관련 ##########
+@st.cache_data
+def get_all_tickers_from_upbit():
 
-    global BOOK
+    # get all tickers from Upbit
+    query_market_tickers_url = "https://api.upbit.com/v1/market/all"
+    response = requests.get(query_market_tickers_url)
+    data = response.json()
+    tickers = [d["market"] for d in data if d["market"].startswith("KRW-")]
+    return tickers
 
-    # JSON 기록 불러오기
-    load_BOOK_data()
-
-    # 조회할 티커 + unit 조합 만들기
-    targets = set_targets()
-
-    # query 요청 수행 설정
-    time_mark = time.time()
-    query_count_in_1s = 0
-
-    # streamlit text status
-    t = st.empty()
-
-    # query 요청 수행
-    temp_cnt = 0
-    for i, (ticker, unit) in enumerate(targets):
-        
-        temp_cnt += 1
-        if temp_cnt > 999: break    # 디버그용
-
-        # key (for BOOK)
-        key = f"{ticker},{unit}"
-
-        # ohlcpv 업데이트 해야하는지 확인
-        update_needed = need_to_update_ohlcpv(key)
-        tu = f"[ {ticker}, {unit} ]"
-        message = f"Request OHLCPV from Upbit -\t{i+1: 3d} / {len(targets)} working on : {tu:23s}" + ('' if update_needed else '\tcached')
-        print(message)
-        t.text(message)
-        if not update_needed: continue
-
-        # query 요청 제어 (1초당 10개 이하로 유지)
-        query_count_in_1s += 1
-        if query_count_in_1s >= 9 and time.time() - time_mark < 1:  # 1초 안됨. 1초 기다리기. 이후 조회수 초기화
-            time.sleep(1); query_count_in_1s = 0; time_mark = time.time()
-
-        # query 요청 후 ohlcpv 추출
-        query_unit = f"{unit}" if unit in ["months", "weeks", "days"] else f"minutes/{unit}"
-        url = f"https://api.upbit.com/v1/candles/{query_unit}?market={ticker}&count=200"
-        response = requests.get(url)
-        candles = response.json()
-        ohlcpv = candles_to_ohlcpv(candles)
-
-        # 저장
-        if key not in BOOK: BOOK[key] = {}
-        for key2 in ohlcpv:
-            BOOK[key][key2] = ohlcpv[key2]
-            BOOK[key]["last_ohlcpv_update_time"] = time.time()
-
-    # stream text status
-    now = datetime.datetime.now()
-    t.text(f"Request OHLCPV from Upbit -\t업데이트 완료 ( {now} )")
-
-    # book to json file
-    with open(BOOK_PATH, 'w', encoding="utf8") as f:
-        json.dump(BOOK, f)
-    
+########## ticker checkbox 관련 ##########
+def check_all_tickers():
+    for key in st.session_state:
+        if key.endswith("_ticker_checkbox"):
+            st.session_state[key] = True
     return
 
+def uncheck_all_tickers(): 
+    for key in st.session_state:
+        if key.endswith("_ticker_checkbox"):
+            st.session_state[key] = False
+    return
+
+########## BOOK read/write 관련 ##########
 def load_BOOK_data():
-
     global BOOK
-
-     # load JSON data if it exist
     try:
         with open(BOOK_PATH, 'r', encoding="utf8") as f:
             BOOK = json.load(f)
             print("past ohlcpv log loaded")
     except:
         print("No past ohlcpv log file. pass")
-        pass
+    return
 
+def save_BOOK_data():
+    global BOOK
+    with open(BOOK_PATH, 'w', encoding="utf8") as f:
+        json.dump(BOOK, f)
+    return
+
+
+# ==================================================================================================================================
+# ==================================================================================================================================
+# ==================================================================================================================================
+
+BOOK = {}
+BOOK_PATH = "book.json"
+
+
+###############################################################################
+# Upbit Query
+###############################################################################
+
+def update_ohlcpvs(tickers, units):
+
+    global BOOK
+
+    # BOOK 내용 불러오기
+    load_BOOK_data()
+
+    # 조회할 마켓 목록 생성
+    targets = [f"{ticker},{unit}" for ticker in tickers for unit in units]
+
+    # query block 방지용 시간 체크용 쿼리 요청 시간 목록
+    query_times = []
+
+    # target 별 ohlcpv API 요청
+    for i, target in enumerate(targets):
+        ticker, unit = target.split(",")
+
+        # ohlcpv 업데이트 해야하는지 확인       // 어짜피 마지막 거래가는 계속 변하므로 무조건 호출. 임시 주석처리
+        # update_needed = need_to_update_ohlcpv(target)
+        update_needed = True
+
+        # 업데이트 중 메세지 출력 
+        message = f"Request OHLCPV from Upbit - {i+1: 3d} / {len(targets)}. Working on : {target:20s}" + "" if update_needed else "  cached"
+        print(message); ohlcpv_message_area.text(message)
+        if not update_needed: continue
+
+        # query block 방지용 시간 체크. 1초이내 9개 도달하면 1초 쉼. (업비트 문서 기준 최대 초당 10개, 버퍼 1개)
+        now = time.time()
+        query_times.append(now)
+        query_times = [qt for qt in query_times if now - qt <= 1]  # 지난 1초 이내 쿼리 목록
+        if len(query_times) >= 9: time.sleep(1); 
+
+        # request ohlcpv data
+        unit_text_to_unit = {"months": "months", "weeks": "weeks", "days":"days", "240분":"minutes/240", "60분":"minutes/60", "30분":"minutes/30",
+                             "15분":"minutes/15", "10분":"minutes/10", "5분":"minutes/5", "3분":"minutes/3", "1분":"minutes/1"}
+        url = f"https://api.upbit.com/v1/candles/{unit_text_to_unit[unit]}?market={ticker}&count=200"
+        ohlcpv = candles_to_ohlcpv(requests.get(url).json())
+
+        # 저장
+        if target not in BOOK: BOOK[target] = {}
+        for key2 in ohlcpv:
+            BOOK[target][key2] = ohlcpv[key2]
+            BOOK[target]["last_ohlcpv_update_time"] = time.time()
+
+
+    # 업데이트 완료 메세지 출력
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["ohlcpv_update_message"] = f"Request OHLCPV from Upbit - 업데이트 완료 ( {now} )"
+    ohlcpv_message_area.text(st.session_state["ohlcpv_update_message"])
+
+    # BOOK 내용 저장
+    save_BOOK_data()
+   
     return
 
 def set_targets():
 
     # ohlcpv 업데이트할 query targets 범위 설정
-    units = ["days", "240", "60", "15"]
+    # units = ["days", "240", "60", "15"]
+    units = ["60"]
 
     # get all tickers from Upbit
     query_market_tickers_url = "https://api.upbit.com/v1/market/all"
@@ -283,64 +235,59 @@ def candles_to_ohlcpv(candles):
 
     return ohlcpv
 
+
 ###############################################################################
 # Indicators
 ###############################################################################
 
-def calc_all_tickers_indicators():
+def update_indicators(tickers, units):
 
     global BOOK
 
-    # streamlit text status
-    t = st.empty()
+    # BOOK 내용 불러오기
+    load_BOOK_data()
 
-    for i, key in enumerate(BOOK):
+    # 보조지표를 계산할 마켓 목록 생성
+    targets = [f"{ticker},{unit}" for ticker in tickers for unit in units]
 
-        ticker, unit = key.split(',')
-        tu = f"[ {ticker}, {unit} ]"
-        message = f"Calculate Indicators \t  -\t{i+1: 3d} / {len(BOOK)} working on : {tu:23s}"
-        print(message)
-        t.text(message)
+    # target 별 보조지표 계산
+    for i, target in enumerate(targets):
+        ticker, unit = target.split(",")
+        
+        # 업데이트 중 메세지 출력
+        message = f"Calculate Indicators \t  -\t{i+1: 3d} / {len(targets)} working on : {target:20s}"
+        print(message); indicators_message_area.text(message)
 
-        dt_ksts = BOOK[key]["date_time_ksts"]
-        opens = BOOK[key]["opens"]
-        highs = BOOK[key]["highs"]
-        lows = BOOK[key]["lows"]
-        trades = BOOK[key]["trades"]
-        tot_prices = BOOK[key]["tot_prices"]
-        tot_volumes = BOOK[key]["tot_volumes"]
+        dt_ksts = BOOK[target]["date_time_ksts"]
+        opens = BOOK[target]["opens"]
+        highs = BOOK[target]["highs"]
+        lows = BOOK[target]["lows"]
+        trades = BOOK[target]["trades"]
+        tot_prices = BOOK[target]["tot_prices"]
+        tot_volumes = BOOK[target]["tot_volumes"]
 
         # RSI
         RSIs = get_RSIs(trades)
-        BOOK[key]["RSI"] = RSIs
+        BOOK[target]["RSI"] = RSIs
 
         # MACD
         MACDs, MACD_signals = get_MACDs(trades)
-        BOOK[key]["MACD"] = MACDs
-        BOOK[key]["MACD_signal"] = MACD_signals
+        BOOK[target]["MACD"] = MACDs
+        BOOK[target]["MACD_signal"] = MACD_signals
 
         # Williams %R
         WilliamsRs = get_WilliamsR(highs, lows, trades)
-        BOOK[key]["Williams%R"] = WilliamsRs
+        BOOK[target]["Williams%R"] = WilliamsRs
 
+    # 업데이트 완료 메세지 출력
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["indicators_update_message"] = f"Calculate Indicators \t  - 업데이트 완료 ( {now} )"
+    indicators_message_area.text(st.session_state["indicators_update_message"])
 
-        # 보조지표 계산 맞는지 체크용 3개씩 출력
-        # print(key)
-        # for i in range(3):
-        #     print(dt_ksts[i], end=" ")
-        #     print(trades[i], end=" ")
-        #     print("RSI", round(RSIs[i], 2), end=" ")
-        #     print("MACD", round(MACDs[i], 2), end=" ")
-        #     print("MACD signal", round(MACD_signals[i], 2))
-        #     print("Williams%R", round(WilliamsRs[i], 2))
-
-    # stream text status
-    now = datetime.datetime.now()
-    t.text(f"Calculate Indicators \t  -\t업데이트 완료 ( {now} )")
+    # BOOK 내용 저장
+    save_BOOK_data()
 
     return
-
-
 
 def get_RSIs(closes, period=14):
 
@@ -456,39 +403,45 @@ def ewm(data, period, a_type="span", adjust=True):
 # Filter (Evaluate)
 ###############################################################################
 
-def evaluate_all_tickers():
+def update_evaluations(tickers, units):
 
     global BOOK
 
-    # streamlit text status
-    t = st.empty()
+    # BOOK 내용 불러오기
+    load_BOOK_data()
 
-    for i, key in enumerate(BOOK.keys()):
+    # 평가할 마켓 목록 생성
+    targets = [f"{ticker},{unit}" for ticker in tickers for unit in units]
 
-        if "eval" not in BOOK[key]: BOOK[key]["eval"] = {}
+    for i, target in enumerate(targets):
+        ticker, unit = target.split(",")
+        
+        # 업데이트 중 메세지 출력
+        message = f"Evaluate status \t  -\t{i+1: 3d} / {len(targets)} working on : {target:20s}"
+        print(message); evaluations_message_area.text(message)
 
-        ticker, unit = key.split(',')
-        tu = f"[ {ticker}, {unit} ]"
-        message = f"Evaluate status \t  -\t{i+1: 3d} / {len(BOOK)} working on : {tu:23s}"
-        print(message)
-        t.text(message)
+        if "eval" not in BOOK[target]: BOOK[target]["eval"] = {}
 
-        RSIs = BOOK[key]["RSI"]
+        RSIs = BOOK[target]["RSI"]
         RSI_status = get_RSI_status(RSIs)
-        BOOK[key]["eval"]["RSI"] = RSI_status
+        BOOK[target]["eval"]["RSI"] = RSI_status
 
-        MACDs = BOOK[key]["MACD"]
-        MACD_signals = BOOK[key]["MACD_signal"]
+        MACDs = BOOK[target]["MACD"]
+        MACD_signals = BOOK[target]["MACD_signal"]
         MACD_status = get_MACD_status(MACDs, MACD_signals)
-        BOOK[key]["eval"]["MACD"] = MACD_status
+        BOOK[target]["eval"]["MACD"] = MACD_status
 
-        WilliamsRs = BOOK[key]["Williams%R"]
+        WilliamsRs = BOOK[target]["Williams%R"]
         WilliamsR_status = get_WilliamsR_status(WilliamsRs)
-        BOOK[key]["eval"]["Williams%R"] = WilliamsR_status
+        BOOK[target]["eval"]["Williams%R"] = WilliamsR_status
 
-    # stream text status
-    now = datetime.datetime.now()
-    t.text(f"Evaluate status \t  -\t업데이트 완료 ( {now} )")
+    # 업데이트 완료 메세지 출력
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["evaluations_update_message"] = f"Evaluate status \t  - 업데이트 완료 ( {now} )"
+    evaluations_message_area.text(st.session_state["evaluations_update_message"])
+
+    # BOOK 내용 저장
+    save_BOOK_data()
 
     return
 
@@ -602,137 +555,362 @@ def get_WilliamsR_status(WilliamsRs):
 
     return "별일 없음"
 
+
 ###############################################################################
-# Driver
+# Volume Power
 ###############################################################################
 
-def driver():
 
-    # OHLCPV
-    get_all_tickers_candles()
+def update_volume_powers(tickers, units):
 
-    # Volume Power (거래강도)
-    # tickers_VPs_d = get_all_tickers_VPs()
-        
-    # 보조지표 
-    calc_all_tickers_indicators()
+    ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    def on_message(ws, message):
+        # do something
+        msg_recieved = message.decode('utf-8')
+        data = json.loads(msg_recieved)
+        code = data["code"]
+        recieved[code] = data
 
-    # 평가 (필터링)
-    evaluate_all_tickers()
+        if len(tickers) == len(recieved):
 
-    #### 확인용 ####
-    # for key in BOOK:
-    #     print("logbook key:", key)
+            ws_app.close()
 
-    #     print("\t", BOOK[key]["RSI"][0:3])
-    #     print("\t", BOOK[key]["eval"]["RSI"])
-    #     print("\t", BOOK[key]["MACD"][0:3])
-    #     print("\t", BOOK[key]["MACD_signal"][0:3])
-    #     print("\t", BOOK[key]["eval"]["MACD"])
-    #     print("\t", BOOK[key]["Williams%R"][0:3])
-    #     print("\t", BOOK[key]["eval"]["Williams%R"])
+    def on_connect(ws):
+        print("connected!")
+        data_to_send = [{"ticket": "jyjyrequestforvp91826642"},
+            {"type": "ticker", "codes": tickers, "isOnlySnapshot": True},
+            {"format": "DEFAULT"}
+            ]
+        message = json.dumps(data_to_send)
+        ws.send(message)
 
-    # book to json file
-    with open(BOOK_PATH, 'w', encoding="utf8") as f:
-        json.dump(BOOK, f)
+    def on_error(ws, err):
+        print(err)
 
-    return
+    def on_close(ws, status_code, msg):
+        print("closed!")
+    ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
 
-def print_evals():
-
-    
     global BOOK
 
-    # JSON 기록 불러오기
+    # BOOK 내용 불러오기
     load_BOOK_data()
 
-    for key in BOOK:
-        time.sleep(0.01)
-        ticker, unit = key.split(",")
+    # web socket url
+    recieved = {}
+    ws_app = websocket.WebSocketApp("wss://api.upbit.com/websocket/v1", on_open=on_connect)
+    ws_app.on_message = on_message
+    ws_app.run_forever()
+    max_retries = 100
+    count = 0
+    while len(recieved) < len(tickers):
+        if count > max_retries: break
+        count += 1
+        time.sleep(0.2)
+    ws_app.close()
 
-        # 키별 판단값 출력
+    # 마켓 목록 생성
+    targets = [f"{ticker},{unit}" for ticker in tickers for unit in units]
+
+    for i, target in enumerate(targets):
+        ticker, unit = target.split(",")
         
-        # streamlit
-        t = st.empty()
+        # 업데이트 중 메세지 출력
+        message = f"Volume Power Query status -\t{i+1: 3d} / {len(targets)} working on : {target:20s}"
+        print(message); volume_powers_message_area.text(message)
 
-        # 출력문 생성
-        streamlit_strs = []
-        line_strs = []
+        # 정보
+        data = recieved[ticker]
 
-        streamlit_strs.append(f"> {key:20s}")
-        line_strs.append(f"> {key:20s}")
+        acc_bid_volume = data["acc_bid_volume"]  # UTC 00:00 이후 물량
+        acc_ask_volume = data["acc_ask_volume"]  # UTC 00:00 이후 물량
+        volume_power = f"{round(acc_bid_volume / acc_ask_volume * 100, 2):.2f}"
+        BOOK[target]["volume_power"] = volume_power
 
-        # RSI
-        RSI_status = BOOK[key]["eval"]["RSI"]
-        
-        if RSI_status.startswith("과매도"):
-            streamlit_strs.append(f"RSI: :red[{RSI_status}]")
-            line_strs.append(txt_color.RED + RSI_status + txt_color.ENDC)
-        elif RSI_status.startswith("과매수"):
-            streamlit_strs.append(f"RSI: :blue[{RSI_status}]\t")
-            line_strs.append(txt_color.BLUE + RSI_status + txt_color.ENDC)
-        else:
-            streamlit_strs.append(f"RSI: {RSI_status}")
-            line_strs.append(f"RSI: {RSI_status:15s}")
+    # 업데이트 완료 메세지 출력
+    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    st.session_state["volume_powers_update_message"] = f"Volume Power Query status - 업데이트 완료 ( {now} )"
+    volume_powers_message_area.text(st.session_state["volume_powers_update_message"])
 
-        # MACD
-        MACD_status = BOOK[key]["eval"]["MACD"]
-        if MACD_status.startswith("골든크로스"):
-            streamlit_strs.append(f"MACD: :red[{MACD_status}]")
-            line_strs.append(txt_color.RED + MACD_status + txt_color.ENDC)
-        elif MACD_status.startswith("데드크로스"):
-            streamlit_strs.append(f"MACD: :blue[{MACD_status}]")
-            line_strs.append(txt_color.BLUE + MACD_status + txt_color.ENDC)
-        else:
-            streamlit_strs.append(f"MACD: {MACD_status}")
-            line_strs.append(f"MACD: {MACD_status:15s}")
-
-        # Williams %R
-        WilliamsR_status = BOOK[key]["eval"]["Williams%R"]
-        if WilliamsR_status.startswith("과매도"):
-            streamlit_strs.append(f"Williams %R: :red[{WilliamsR_status}]")
-            line_strs.append(txt_color.RED + WilliamsR_status + txt_color.ENDC)
-        elif WilliamsR_status.startswith("과매수"):
-            streamlit_strs.append(f"Williams %R: :blue[{WilliamsR_status}]")
-            line_strs.append(txt_color.BLUE + WilliamsR_status + txt_color.ENDC)
-        else:
-            streamlit_strs.append(f"Williams %R: {WilliamsR_status}")
-            line_strs.append(f"Williams %R: {WilliamsR_status:15s}")
-
-        streamlit_str = "\t".join(streamlit_strs)
-        line = "\t".join(line_strs)
-
-        st.write(streamlit_str)        
-        print(line)
+    # BOOK 내용 저장
+    save_BOOK_data()
 
     return
 
-def create_dataframe():
 
-    d = {}
-    
-    index = []
-    rsi = []
-    macd = []
-    williamsr = []
+###############################################################################
+# Page Layout
+###############################################################################
+
+st.set_page_config(layout="wide")
+
+#####
+# 제목 영역
+#####
+st.title('sasdf')
+
+
+##############################
+# 조회 Ticker 선택 영역
+##############################
+ticker_list_column_size = 6
+
+with st.expander("업데이트할 Ticker 선택"):
+    # 전체 선택 / 해제
+    tickers_button_container = st.container()
+    button_row = tickers_button_container.columns(6)
+    with button_row[0]: st.button("전체 선택", on_click=check_all_tickers)
+    with button_row[1]: st.button("전체 해제", on_click=uncheck_all_tickers)
+    ticker_list = st.container(height=200)
+
+    # upbit ticker 전부 가져와서 영역 checkbox row, column 생성
+    upbit_tickers = get_all_tickers_from_upbit()
+    l = []
+    list_size = len(upbit_tickers) // ticker_list_column_size if len(upbit_tickers) % ticker_list_column_size == 0 else len(upbit_tickers) // ticker_list_column_size + 1
+    for i in range(list_size):    # ticker_list_column_size 씩 묶어서 nested list 생성
+        if i * ticker_list_column_size + ticker_list_column_size > len(upbit_tickers):
+            ll = upbit_tickers[i * ticker_list_column_size:len(upbit_tickers)]
+        else:
+            ll = upbit_tickers[i * ticker_list_column_size: i * ticker_list_column_size + ticker_list_column_size]
+        l.append(ll)
+    for tickers in l:
+        row = ticker_list.columns(ticker_list_column_size)
+        for i, ticker in enumerate(tickers):
+            with row[i]:
+                st.checkbox(ticker, value=True, key=f"{ticker}_ticker_checkbox")
+    query_target_tickers = []
+    for ticker in upbit_tickers:
+        if st.session_state[f"{ticker}_ticker_checkbox"]:
+            query_target_tickers.append(ticker)
+
+    total_ticker_checkbox_count = len(upbit_tickers)
+    print(f"checked: {len(query_target_tickers)} / unchecked: {total_ticker_checkbox_count - len(query_target_tickers)}")
+
+
+##############################
+# 조회 Unit 선택 영역
+##############################
+unit_list_column_size = 6
+
+with st.expander("업데이트할 Candle 단위 선택"):
+    unit_list = st.container(height=200)
+
+    units = ["months", "weeks", "days", "240분", "60분", "30분", "15분", "10분", "5분", "3분", "1분"]
+    l = []
+    list_size = len(units) // unit_list_column_size if len(units) % unit_list_column_size == 0 else len(units) // unit_list_column_size + 1
+    for i in range(list_size):
+        if i * unit_list_column_size + unit_list_column_size > len(units):
+            ll = units[i * unit_list_column_size:len(units)]
+        else:
+            ll = units[i * unit_list_column_size: i * unit_list_column_size + unit_list_column_size]
+        l.append(ll)
+    for us in l:
+        row = unit_list.columns(unit_list_column_size)
+        for i, unit in enumerate(us):
+            with row[i]:
+                if unit in ["240분", "60분"]:
+                    st.checkbox(unit, value=True, key=f"{unit}_unit_checkbox")
+                else:
+                    st.checkbox(unit, value=False, key=f"{unit}_unit_checkbox")
+    query_target_units = []
+    for unit in units:
+        if st.session_state[f"{unit}_unit_checkbox"]:
+            query_target_units.append(unit)
+
+    total_unit_checkbox_count = len(units)
+    print(f"checked units: {len(query_target_units)} / unchecked units: {total_unit_checkbox_count - len(query_target_units)}")
+
+
+##############################
+# 조회 시작 / 중지 버튼
+##############################
+
+if "is_updating" not in st.session_state: st.session_state["is_updating"] = False  # 업데이트 상태 추가
+update_start_stop_button_container = st.container()
+ussbc_cols = update_start_stop_button_container.columns(6)
+with ussbc_cols[0]:
+    if st.button("업데이트 시작", key="update_start_button", disabled=st.session_state["is_updating"]):
+        st.session_state["is_updating"] = True
+        st.rerun()
+with ussbc_cols[1]:
+    if st.button("업데이트 중지", key="update_stop_button", disabled=not st.session_state["is_updating"]):
+        st.session_state["is_updating"] = False
+        st.rerun()
+
+##############################
+# 메세지 출력 공간
+##############################
+        
+# streamlit page 에 진행상황 표시할 위치 생성
+if "ohlcpv_update_message" not in st.session_state: 
+    st.session_state["ohlcpv_update_message"] = "Request OHLCPV from Upbit -\tWaiting for update to start."
+ohlcpv_message_area = st.empty()
+ohlcpv_message_area.text(st.session_state["ohlcpv_update_message"])
+
+if "indicators_update_message" not in st.session_state:
+    st.session_state["indicators_update_message"] = "Calculate Indicators \t  -\tWaiting for update to start."
+indicators_message_area = st.empty()
+indicators_message_area.text(st.session_state["indicators_update_message"])
+
+if "evaluations_update_message" not in st.session_state:
+    st.session_state["evaluations_update_message"] = "Evaluate status \t  -\tWaiting for update to start."
+evaluations_message_area = st.empty()
+evaluations_message_area.text(st.session_state["evaluations_update_message"])
+
+if "volume_powers_update_message" not in st.session_state:
+    st.session_state["volume_powers_update_message"] = "Volume Power Query status -\tWaiting for update to start."
+volume_powers_message_area = st.empty()
+volume_powers_message_area.text(st.session_state["volume_powers_update_message"])
+
+##############################
+# 작업 수행 호출
+##############################
+if "update_ever_happened" not in st.session_state:
+    st.session_state["update_ever_happened"] = False
+
+if st.session_state["is_updating"]:
+    update_ohlcpvs(query_target_tickers, query_target_units)
+    update_indicators(query_target_tickers, query_target_units)
+    update_evaluations(query_target_tickers, query_target_units)
+    update_volume_powers(query_target_tickers, query_target_units)
+
+    # update 발생 기록
+    st.session_state["update_ever_happened"] = True
+
+    # 업데이트 시작/중지 버튼 새로고침
+    st.session_state["is_updating"] = False
+    st.rerun()
+
+##############################
+# 작업 수행 후 출력 공간
+##############################
+
+def show_BOOK_dataframe(tickers, units):
 
     global BOOK
 
-    for key in BOOK:
+    # BOOK 내용 불러오기
+    load_BOOK_data()
 
-        ticker, unit = key.split(",")
-        
-        index.append(key)
-        rsi.append(BOOK[key]["eval"]["RSI"])
-        macd.append(BOOK[key]["eval"]["MACD"])
-        williamsr.append(BOOK[key]["eval"]["Williams%R"])
+    # 보여줄 마켓 목록 생성
+    targets = [f"{ticker},{unit}" for ticker in tickers for unit in units]
 
-    df = pd.DataFrame(list(zip(rsi, macd, williamsr)), index=index, columns=["RSI", "MACD", "Williams %R"])
-    st.dataframe(df.style.applymap(df_color_text, subset=["RSI", "MACD", "Williams %R"]), width=800, height=900)
+    # dataframe 설정
+    columns = ["RSI", "MACD", "Williams %R", "Volume Power"]
+    index   = targets
+
+    df = pd.DataFrame(columns=columns, index=index)
+
+    for target in targets:
+        ticker, unit = target.split(",")
+
+        series_d = {}
+
+        # RSI
+        series_d["RSI"] = BOOK[target]["eval"]["RSI"]
+
+        # MACD
+        series_d["MACD"] = BOOK[target]["eval"]["MACD"]
+
+        # Williams %R
+        series_d["Williams %R"] = BOOK[target]["eval"]["Williams%R"]
+
+        # volume power
+        series_d["Volume Power"] = BOOK[target]["volume_power"]
+
+        df.loc[target] = pd.Series(series_d)
+
+    # highlight 
+    # df = df.style.applymap(df_color_indicator_text, subset=["RSI", "MACD", "Williams %R"])
+    df = df.style.map(df_color_indicator_text, subset=["RSI", "MACD", "Williams %R"])
+
+    # show dataframe
+    st.session_state["dataframe_area"].dataframe(df)
 
     return
 
-def df_color_text(value):
+# def create_dataframe():
+
+#     d = {}
+    
+#     index = []
+#     rsi = []
+#     rsi_line = []
+#     macd = []
+#     macd_oscillator_line = []
+#     williamsr = []
+#     williamsr_line = []
+#     volumepower = []
+
+#     columns = ["RSI", "RSI_line", "MACD","MACD_osc_line", "Williams %R","Williams %R_line", "Volume Power"]
+
+#     global BOOK
+
+#     for key in BOOK:
+
+#         ticker, unit = key.split(",")
+        
+#         index.append(key)
+
+#         # RSI
+#         rsi.append(BOOK[key]["eval"]["RSI"])
+#         rsi_line_data = [v if v is not None else 0 for v in BOOK[key]["RSI"]][:50][::-1]
+#         rsi_line.append(rsi_line_data)
+
+#         # MACD
+#         macd.append(BOOK[key]["eval"]["MACD"])
+#         macd_line_data = [v if v is not None else 0 for v in BOOK[key]["MACD"]]
+#         macd_signal_line_data = [v if v is not None else 0 for v in BOOK[key]["MACD_signal"]]
+#         macd_oscillator_line_data = list(map(lambda x: x[0] - x[1], zip(macd_line_data, macd_signal_line_data)))[:50][::-1]
+#         macd_oscillator_line.append(macd_oscillator_line_data)
+
+#         # Williams %R
+#         williamsr.append(BOOK[key]["eval"]["Williams%R"])
+#         williamsr_line_data = [v if v is not None else 0 for v in BOOK[key]["Williams%R"]][:50][::-1]
+#         williamsr_line.append(williamsr_line_data)
+
+#         # Volume Power
+#         volumepower.append(BOOK[key]["VolumePower"])
+
+#     df = pd.DataFrame(list(zip(rsi, rsi_line, macd,macd_oscillator_line, williamsr,williamsr_line, volumepower)), index=index, columns=columns)
+#     df = df.style.applymap(df_color_indicator_text, subset=["RSI", "MACD", "Williams %R"])
+#     # st.dataframe(df.style.applymap(df_color_text, subset=["RSI", "MACD", "Williams %R"]), width=800, height=900)
+#     # st.data_editor(df, column_config={
+#     #     "RSI_line": st.column_config.LineChartColumn(
+#     #         "RSI line chart (200)"
+#     #     )
+#     # })
+#     st.dataframe(
+#         df, 
+#         column_config={
+#             "RSI_line": st.column_config.LineChartColumn(
+#                 label = "RSI line chart (50)",
+#                 width = "small",
+#                 y_min = 0,
+#                 y_max = 100
+#             ),
+#             "MACD_osc_line": st.column_config.LineChartColumn(
+#                 label = "MACD osc line chart (50)",
+#                 width = "small",
+#             ),
+#             "Williams %R_line": st.column_config.LineChartColumn(
+#                 label = "Williams %R line chart (50)",
+#                 width = "small",
+#                 y_min = -100,
+#                 y_max = 0
+#             )
+#         }, 
+#         width=1600, 
+#         height=1000
+#     )
+
+#     return
+
+def df_color_indicator_text(value):
 
     value = str(value)
     match_red1 = True if "과매도" in value else False
@@ -749,8 +927,11 @@ def df_color_text(value):
 
     return style
 
-class txt_color:
+def df_color_volume_power_text(value):
 
+    pass
+
+class txt_color:
     HEADER = '\033[95m'
     BLUE = '\033[94m'
     OKCYAN = '\033[96m'
@@ -762,6 +943,15 @@ class txt_color:
     UNDERLINE = '\033[4m'
 
 
-driver()
+if st.session_state["update_ever_happened"]:
+    if "dataframe_area" not in st.session_state:
+        st.session_state["dataframe_area"] = st.empty()
 
-create_dataframe()
+    show_BOOK_dataframe(query_target_tickers, query_target_units)
+
+# ==================================================================================================================================
+# ==================================================================================================================================
+# ==================================================================================================================================
+
+
+
