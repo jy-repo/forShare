@@ -71,6 +71,38 @@ BOOK_PATH = "book.json"
 
 def update_ohlcpvs(tickers, units):
 
+    # ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    # ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    # ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    # def on_message(ws, message):
+    #     # do something
+    #     msg_recieved = message.decode('utf-8')
+    #     data = json.loads(msg_recieved)
+    #     code = data["code"]
+    #     recieved[code] = data
+
+    #     if len(tickers) == len(recieved):
+
+    #         ws_app.close()
+
+    # def on_connect(ws):
+    #     print("connected!")
+    #     data_to_send = [{"ticket": "jyjyrequestforvp91826642"},
+    #         {"type": "ticker", "codes": tickers, "isOnlySnapshot": True},
+    #         {"format": "DEFAULT"}
+    #         ]
+    #     message = json.dumps(data_to_send)
+    #     ws.send(message)
+
+    # def on_error(ws, err):
+    #     print(err)
+
+    # def on_close(ws, status_code, msg):
+    #     print("closed!")
+    # ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    # ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+    # ###### for websocket ##### ###### for websocket ##### ###### for websocket #####
+
     global BOOK
 
     # BOOK 내용 불러오기
@@ -107,11 +139,24 @@ def update_ohlcpvs(tickers, units):
         url = f"https://api.upbit.com/v1/candles/{unit_text_to_unit[unit]}?market={ticker}&count=200"
         ohlcpv = candles_to_ohlcpv(requests.get(url).json())
 
-        # 저장
+        # BOOK 에 기록
         if target not in BOOK: BOOK[target] = {}
         for key2 in ohlcpv:
             BOOK[target][key2] = ohlcpv[key2]
             BOOK[target]["last_ohlcpv_update_time"] = time.time()
+
+    # # web socket url
+    # recieved = {}
+    # ws_app = websocket.WebSocketApp("wss://api.upbit.com/websocket/v1", on_open=on_connect)
+    # ws_app.on_message = on_message
+    # ws_app.run_forever()
+    # max_retries = 100
+    # count = 0
+    # while len(recieved) < len(tickers):
+    #     if count > max_retries: break
+    #     count += 1
+    #     time.sleep(0.2)
+    # ws_app.close()
 
 
     # 업데이트 완료 메세지 출력
@@ -699,7 +744,8 @@ unit_list_column_size = 6
 with st.expander("업데이트할 Candle 단위 선택"):
     unit_list = st.container(height=200)
 
-    units = ["months", "weeks", "days", "240분", "60분", "30분", "15분", "10분", "5분", "3분", "1분"]
+    # units = ["months", "weeks", "days", "240분", "60분", "30분", "15분", "10분", "5분", "3분", "1분"]  
+    units = ["days", "240분", "60분", "15분", "5분"]  # 너무 주기가 짧은건 임시로 뻄. 안쓸것도 뻄.
     l = []
     list_size = len(units) // unit_list_column_size if len(units) % unit_list_column_size == 0 else len(units) // unit_list_column_size + 1
     for i in range(list_size):
